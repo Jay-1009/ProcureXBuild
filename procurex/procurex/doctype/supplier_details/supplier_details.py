@@ -82,8 +82,10 @@ class SupplierDetails(Document):
 		except Exception as e:
 			frappe.log_error(message=frappe.get_traceback(), title="Supplier Approval Email Error")
 
-		# Delete this staging record since it is now converted into standard records
-		frappe.delete_doc("Supplier Details", self.name, force=True)
+		# Retain the staging record by updating its status and linking it to the created Supplier
+		self.status = "Approved"
+		self.supplier = supplier.name
+		self.save(ignore_permissions=True)
 		frappe.db.commit()
 
 		return "Approved"

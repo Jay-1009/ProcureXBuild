@@ -1,5 +1,6 @@
 import frappe
 from frappe import _
+from frappe.utils import flt
 
 @frappe.whitelist(allow_guest=True)
 def signup(
@@ -216,7 +217,7 @@ def login(usr, pwd):
     if not supp_details:
         supp_details = frappe.db.get_value("Supplier Details", {"email_address": email}, ["status", "name"], as_dict=True)
 
-    if supp_details:
+    if supp_details and supp_details.status != "Approved":
         return {
             "email": email,
             "status": supp_details.status,
@@ -285,7 +286,7 @@ def get_current_supplier():
     if not supp_details:
         supp_details = frappe.db.get_value("Supplier Details", {"email_address": email}, ["status", "name"], as_dict=True)
 
-    if supp_details:
+    if supp_details and supp_details.status != "Approved":
         return {
             "email": email,
             "status": supp_details.status,
@@ -1295,6 +1296,12 @@ def get_purchase_invoices():
 
 @frappe.whitelist(allow_guest=True)
 def run_supplier_workflow_tests():
+    import frappe
+    import frappe.model.delete_doc
+    original_check = frappe.model.delete_doc.check_permission_and_not_submitted
+    frappe.model.delete_doc.check_permission_and_not_submitted = lambda doc: None
+    frappe.set_user("Administrator")
+    frappe.flags.ignore_permissions = True
     print("--- STARTING WORKFLOW TESTS ---")
     
     import frappe.auth
@@ -1302,9 +1309,12 @@ def run_supplier_workflow_tests():
 
     class MockLoginManager:
         def __init__(self, *args, **kwargs): pass
-        def authenticate(self, *args, **kwargs): pass
+        def authenticate(self, user=None, pwd=None, *args, **kwargs):
+            if user:
+                frappe.session.user = user
         def post_login(self, *args, **kwargs): pass
-        def logout(self, *args, **kwargs): pass
+        def logout(self, *args, **kwargs):
+            frappe.session.user = "Guest"
 
     frappe.auth.LoginManager = MockLoginManager
     frappe.local.login_manager = MockLoginManager()
@@ -1315,13 +1325,15 @@ def run_supplier_workflow_tests():
 
     # Cleanup any existing test data
     frappe.db.rollback()
+    frappe.set_user("Administrator")
+    frappe.flags.ignore_permissions = True
     if frappe.db.exists("Supplier Details", email):
-        frappe.delete_doc("Supplier Details", email, force=True)
+        frappe.delete_doc("Supplier Details", email, force=True, ignore_permissions=True)
     if frappe.db.exists("User", email):
-        frappe.delete_doc("User", email, force=True)
+        frappe.delete_doc("User", email, force=True, ignore_permissions=True)
     supplier_id = frappe.db.get_value("Supplier", {"supplier_name": "Test Supplier One"})
     if supplier_id:
-        frappe.delete_doc("Supplier", supplier_id, force=True)
+        frappe.delete_doc("Supplier", supplier_id, force=True, ignore_permissions=True)
     frappe.db.commit()
 
     # 1. Test Signup Stage 1
@@ -1364,7 +1376,7 @@ def run_supplier_workflow_tests():
 
     # 5. Test Admin Rejection
     print("Testing Admin Rejection...")
-    frappe.session.user = "Administrator"
+    frappe.set_user("Administrator")
     doc = frappe.get_doc("Supplier Details", email)
     doc.reject()
     assert doc.status == "Rejected", f"Expected Rejected status, got {doc.status}"
@@ -1381,6 +1393,7 @@ def run_supplier_workflow_tests():
 
     # 6. Test Admin Suspension
     print("Testing Admin Suspension...")
+    frappe.set_user("Administrator")
     doc = frappe.get_doc("Supplier Details", email)
     doc.suspend()
     assert doc.status == "Suspended", f"Expected Suspended status, got {doc.status}"
@@ -1397,22 +1410,26 @@ def run_supplier_workflow_tests():
 
     # 7. Test Admin Approval
     print("Testing Admin Approval...")
+    frappe.set_user("Administrator")
     doc = frappe.get_doc("Supplier Details", email)
     doc.approve()
     
-    # Check staging record is deleted
-    assert not frappe.db.exists("Supplier Details", email), "Supplier Details document was not deleted after approval!"
+    # Check staging record is updated to Approved
+    assert frappe.db.exists("Supplier Details", email), "Supplier Details document should still exist after approval!"
+    assert frappe.db.get_value("Supplier Details", email, "status") == "Approved", "Supplier Details status should be Approved"
     
     # Check standard records created
     suppliers = frappe.get_all("Supplier", filters=[["Portal User", "user", "=", email]], fields=["name"])
     assert len(suppliers) > 0, "Standard Supplier record not created"
     supplier_name_id = suppliers[0]["name"]
     
+    assert frappe.db.get_value("Supplier Details", email, "supplier") == supplier_name_id, "Supplier Details should be linked to the Supplier record"
+    
     assert frappe.db.exists("Supplier", supplier_name_id), f"Standard Supplier record {supplier_name_id} not found"
     assert frappe.db.get_value("Supplier", supplier_name_id, "supplier_name") == "Test Supplier One", "Supplier name does not match"
     assert frappe.db.exists("Address", {"address_title": "Test Supplier One"}), "Standard Address record not created"
     assert frappe.db.exists("Contact", {"first_name": "Test Supplier One"}), "Standard Contact record not created"
-    print("Admin Approval and Staging Deletion passed!")
+    print("Admin Approval and Staging Retention passed!")
 
     # 8. Test Login after approval
     print("Testing login after approval...")
@@ -1421,23 +1438,27 @@ def run_supplier_workflow_tests():
     print("Login after approval passed!")
 
     # Final cleanup
+    frappe.set_user("Administrator")
     frappe.auth.LoginManager = original_login_manager
     frappe.db.rollback()
     
     # delete address, contact, supplier, and user
     address_name = frappe.db.get_value("Address", {"address_title": "Test Supplier One"})
     if address_name:
-        frappe.delete_doc("Address", address_name, force=True)
+        frappe.delete_doc("Address", address_name, force=True, ignore_permissions=True)
     contact_name = frappe.db.get_value("Contact", {"first_name": "Test Supplier One"})
     if contact_name:
-        frappe.delete_doc("Contact", contact_name, force=True)
+        frappe.delete_doc("Contact", contact_name, force=True, ignore_permissions=True)
     
     if supplier_name_id:
-        frappe.delete_doc("Supplier", supplier_name_id, force=True)
+        frappe.delete_doc("Supplier", supplier_name_id, force=True, ignore_permissions=True)
 
-    frappe.delete_doc("Supplier Details", email, force=True)
-    frappe.delete_doc("User", email, force=True)
+    frappe.delete_doc("Supplier Details", email, force=True, ignore_permissions=True)
+    frappe.delete_doc("User", email, force=True, ignore_permissions=True)
     frappe.db.commit()
+
+    frappe.flags.ignore_permissions = False
+    frappe.model.delete_doc.check_permission_and_not_submitted = original_check
 
     print("--- ALL TESTS COMPLETED SUCCESSFULLY ---")
     return "All tests passed successfully!"
@@ -1674,3 +1695,563 @@ def get_all_suppliers(start=0, page_length=10, status=None, category=None, risk_
         "kpi_metrics": kpi_metrics,
         "top_suppliers": top_suppliers
     }
+
+#for AVL
+def _is_admin_or_staff(user: str) -> bool:
+    roles = frappe.get_roles(user)
+    return (
+        user == "Administrator"
+        or "Administrator" in roles
+        or "System Manager" in roles
+        or "Purchase Manager" in roles
+        or "Finance Controller" in roles
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. get_avl_data  — main endpoint called by avl_lazy.tsx on load / refresh
+# ─────────────────────────────────────────────────────────────────────────────
+
+@frappe.whitelist()
+def get_avl_data():
+    """
+    Returns the complete AVL dataset in one call:
+    - vendors[]          full vendor rows (matches VendorData TS type)
+    - category_summaries[] stacked-bar chart data
+    - kpis{}             5 KPI strip numbers
+    - alerts[]           dynamic alert cards (type + supplier + message)
+    - categories[]       distinct supplier groups for the filter dropdown
+
+    Auth: any logged-in user (Supplier role gets limited data via is_admin_or_staff flag).
+    Purchase Manager / System Manager / Administrator see ALL vendors.
+    """
+    user = frappe.session.user
+    if user == "Guest":
+        frappe.throw(_("Not logged in"), frappe.PermissionError)
+
+    # ── 1. Fetch standard Supplier records ────────────────────────────────────
+    standard_suppliers = frappe.get_all(
+        "Supplier",
+        fields=["name", "supplier_name", "supplier_group", "supplier_type", "disabled", "on_hold", "is_frozen", "creation"],
+        limit_page_length=0,
+    )
+    supplier_names = [s["name"] for s in standard_suppliers]
+
+    # ── 2. Fetch staging Supplier Details records (Draft, Pending, Rejected, Suspended)
+    staging_suppliers = frappe.get_all(
+        "Supplier Details",
+        fields=["name", "supplier_name", "email_address", "supplier_group", "supplier_type", "status", "contact_no", "creation"],
+        filters={"status": ["in", ["Draft", "Pending Approval", "Rejected", "Suspended"]]},
+        limit_page_length=0,
+    )
+
+    # ── 3. Fetch AVL Vendor Meta records ──────────────────────────────────────
+    avl_records = frappe.get_all(
+        "AVL Vendor Meta",
+        fields=[
+            "name",
+            "supplier",
+            "avl_status",
+            "avl_tier",
+            "compliance_status",
+            "last_audit_date",
+            "tenC_competency",
+            "tenC_capacity",
+            "tenC_quality_commitment",
+            "tenC_consistency",
+            "tenC_cost",
+            "tenC_cash",
+            "tenC_communication",
+            "tenC_control_of_processes",
+            "tenC_csr",
+            "tenC_culture",
+        ],
+        limit_page_length=0,
+    )
+    avl_map = {r["supplier"]: r for r in avl_records}
+
+    # ── 4. Addresses (city + state) via Dynamic Link ─────────────────────────
+    addr_map = {}
+    if supplier_names:
+        addr_raw = frappe.db.sql(
+            """
+            SELECT dl.link_name AS supplier, a.city, a.state
+            FROM `tabAddress` a
+            JOIN `tabDynamic Link` dl
+                ON dl.parent = a.name
+            AND dl.link_doctype = 'Supplier'
+            AND dl.parenttype = 'Address'
+            WHERE dl.link_name IN %(names)s
+            """,
+            {"names": supplier_names},
+            as_dict=True,
+        )
+        for a in addr_raw:
+            if a["supplier"] not in addr_map:
+                addr_map[a["supplier"]] = a
+
+    # ── 5. Contact person + email via Dynamic Link ───────────────────────────
+    contact_map = {}
+    if supplier_names:
+        contact_raw = frappe.db.sql(
+            """
+            SELECT dl.link_name AS supplier,
+                c.first_name, c.last_name, c.email_id
+            FROM `tabContact` c
+            JOIN `tabDynamic Link` dl
+                ON dl.parent = c.name
+            AND dl.link_doctype = 'Supplier'
+            AND dl.parenttype = 'Contact'
+            WHERE dl.link_name IN %(names)s
+            """,
+            {"names": supplier_names},
+            as_dict=True,
+        )
+        for c in contact_raw:
+            if c["supplier"] not in contact_map:
+                contact_map[c["supplier"]] = c
+
+    # ── 6. Active PO count per supplier ─────────────────────────────────────
+    po_count_map = {}
+    if supplier_names:
+        po_count_raw = frappe.db.sql(
+            """
+            SELECT supplier, COUNT(*) AS active_pos
+            FROM `tabPurchase Order`
+            WHERE supplier IN %(names)s
+            AND status IN ('To Receive and Bill', 'To Bill', 'To Receive')
+            AND docstatus = 1
+            GROUP BY supplier
+            """,
+            {"names": supplier_names},
+            as_dict=True,
+        )
+        po_count_map = {r["supplier"]: r["active_pos"] for r in po_count_raw}
+
+    # ── 7. Total spend per supplier (Purchase Order, submitted, active suppliers)
+    spend_map = {}
+    # Active suppliers: disabled=0, on_hold=0, is_frozen=0
+    spend_raw = frappe.db.sql(
+        """
+        SELECT po.supplier, SUM(po.grand_total) / 10000000.0 AS spend_cr
+        FROM `tabPurchase Order` po
+        JOIN `tabSupplier` s ON s.name = po.supplier
+        WHERE s.disabled = 0 AND s.on_hold = 0 AND s.is_frozen = 0
+        AND po.docstatus = 1
+        GROUP BY po.supplier
+        """,
+        as_dict=True,
+    )
+    spend_map = {r["supplier"]: flt(r["spend_cr"]) for r in spend_raw}
+
+    # ── 8. Supplier Scorecard — latest score + OTD + quality ─────────────────
+    scorecard_map = {}
+    if supplier_names:
+        scorecard_raw = frappe.db.sql(
+            """
+            SELECT sc.supplier,
+                sc.supplier_score,
+                MAX(CASE WHEN scc.criteria_name = 'On Time Delivery' THEN scc.score END) AS otd,
+                MAX(CASE WHEN scc.criteria_name = 'Quality'           THEN scc.score END) AS quality
+            FROM `tabSupplier Scorecard` sc
+            LEFT JOIN `tabSupplier Scorecard Period` scp ON scp.scorecard = sc.name
+            LEFT JOIN `tabSupplier Scorecard Scoring Criteria` scc ON scc.parent = scp.name
+            WHERE sc.supplier IN %(names)s
+            GROUP BY sc.supplier, sc.supplier_score
+            """,
+            {"names": supplier_names},
+            as_dict=True,
+        )
+        scorecard_map = {r["supplier"]: r for r in scorecard_raw}
+
+    # ── 9. Quality Inspection fallback (if Scorecard not configured) ─────────
+    quality_map = {}
+    if supplier_names:
+        quality_raw = frappe.db.sql(
+            """
+            SELECT COALESCE(pr.supplier, pi.supplier) AS supplier,
+                SUM(CASE WHEN qi.status = 'Accepted' THEN 1 ELSE 0 END) AS accepted,
+                COUNT(*) AS total
+            FROM `tabQuality Inspection` qi
+            LEFT JOIN `tabPurchase Receipt` pr ON qi.reference_type = 'Purchase Receipt' AND pr.name = qi.reference_name
+            LEFT JOIN `tabPurchase Invoice` pi ON qi.reference_type = 'Purchase Invoice' AND pi.name = qi.reference_name
+            WHERE COALESCE(pr.supplier, pi.supplier) IN %(names)s
+            AND qi.docstatus = 1
+            AND qi.report_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY COALESCE(pr.supplier, pi.supplier)
+            """,
+            {"names": supplier_names},
+            as_dict=True,
+        )
+        quality_map = {
+            r["supplier"]: round((r["accepted"] / r["total"]) * 100, 1) if r["total"] else 0.0
+            for r in quality_raw
+        }
+
+    # ── 10. Certifications (child table of AVL Vendor Meta) ───────────────────
+    cert_map = {}
+    avl_meta_names = [r["name"] for r in avl_records]
+    if avl_meta_names:
+        cert_raw = frappe.get_all(
+            "AVL Certification",
+            filters={"parent": ["in", avl_meta_names]},
+            fields=["parent", "certification_name"],
+            limit_page_length=0,
+        )
+        for c in cert_raw:
+            cert_map.setdefault(c["parent"], []).append(c["certification_name"])
+
+    # ── 11. Cost Index (avg quote rate vs item baseline) ─────────────────────
+    cost_map = {}
+    if supplier_names:
+        cost_raw = frappe.db.sql(
+            """
+            SELECT po.supplier,
+                AVG(sqi.rate / NULLIF(i.valuation_rate, 0)) * 100 AS cost_idx
+            FROM `tabSupplier Quotation Item` sqi
+            JOIN `tabSupplier Quotation` sq ON sq.name = sqi.parent AND sq.docstatus = 1
+            JOIN `tabPurchase Order` po ON po.supplier = sq.supplier
+            JOIN `tabItem` i ON i.name = sqi.item_code
+            WHERE sq.supplier IN %(names)s
+            AND i.valuation_rate > 0
+            GROUP BY sq.supplier
+            """,
+            {"names": supplier_names},
+            as_dict=True,
+        )
+        cost_map = {r["supplier"]: round(flt(r["cost_idx"]), 0) for r in cost_raw}
+
+    # ── 12. Build vendor rows ────────────────────────────────────────────────
+    vendors = []
+    
+    # ── 12a. Build vendor rows for Standard Suppliers ─────────────────────────
+    for s in standard_suppliers:
+        sup_name = s["name"]
+        rec = avl_map.get(sup_name) or {}
+        addr = addr_map.get(sup_name) or {}
+        contact = contact_map.get(sup_name) or {}
+        scorecard = scorecard_map.get(sup_name) or {}
+
+        # Determine status
+        if s.get("disabled") == 1 or s.get("is_frozen") == 1:
+            status = "Suspended"
+        elif s.get("on_hold") == 1:
+            status = "Conditional"
+        else:
+            status = rec.get("avl_status") or "Approved"
+
+        # Location: "City, State"
+        city = addr.get("city") or ""
+        state = addr.get("state") or ""
+        location = f"{city}, {state}".strip(", ") if (city or state) else "—"
+
+        # OTD
+        otd = flt(scorecard.get("otd") or 0)
+        if not otd:
+            otd_raw = frappe.db.sql(
+                """
+                SELECT
+                    SUM(CASE WHEN pr.posting_date <= po.schedule_date THEN 1 ELSE 0 END) AS on_time,
+                    COUNT(DISTINCT po.name) AS total
+                FROM `tabPurchase Receipt Item` pri
+                JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent AND pr.docstatus = 1
+                JOIN `tabPurchase Order` po ON po.name = pri.purchase_order
+                WHERE po.supplier = %(sup)s
+                """,
+                {"sup": sup_name},
+                as_dict=True,
+            )
+            if otd_raw and otd_raw[0]["total"]:
+                otd = round((otd_raw[0]["on_time"] / otd_raw[0]["total"]) * 100, 1)
+
+        quality = flt(scorecard.get("quality") or quality_map.get(sup_name) or 0)
+        raw_score = flt(scorecard.get("supplier_score") or 0)
+        rating = min(5, max(1, round(raw_score / 20))) if raw_score else 3
+
+        certs = cert_map.get(rec.get("name"), []) if rec else []
+
+        first = contact.get("first_name") or ""
+        last = contact.get("last_name") or ""
+        contact_person = f"{first} {last}".strip() or "—"
+        contact_email = contact.get("email_id") or "—"
+
+        last_audit = str(rec.get("last_audit_date") or "")
+        if last_audit:
+            try:
+                from frappe.utils import formatdate
+                last_audit = formatdate(last_audit, "MMM YYYY")
+            except Exception:
+                pass
+
+        vendor_row = {
+            "id": sup_name,
+            "name": s.get("supplier_name") or sup_name,
+            "category": s.get("supplier_group") or "Uncategorised",
+            "location": location,
+            "status": status,
+            "tier": rec.get("avl_tier") or "Useful",
+            "complianceStatus": rec.get("compliance_status") or "Pending",
+            "lastAuditDate": last_audit,
+            "certifications": certs,
+            "rating": rating,
+            "onTimeDelivery": otd,
+            "qualityScore": quality,
+            "costIndex": cost_map.get(sup_name) or 100,
+            "activePos": po_count_map.get(sup_name) or 0,
+            "totalSpend": spend_map.get(sup_name) or 0.0,
+            "contactPerson": contact_person,
+            "contactEmail": contact_email,
+            "tenC": {
+                "competency":         rec.get("tenC_competency") or 5,
+                "capacity":           rec.get("tenC_capacity") or 5,
+                "qualityCommitment":  rec.get("tenC_quality_commitment") or 5,
+                "consistency":        rec.get("tenC_consistency") or 5,
+                "cost":               rec.get("tenC_cost") or 5,
+                "cash":               rec.get("tenC_cash") or 5,
+                "communication":      rec.get("tenC_communication") or 5,
+                "controlOfProcesses": rec.get("tenC_control_of_processes") or 5,
+                "csr":                rec.get("tenC_csr") or 5,
+                "culture":            rec.get("tenC_culture") or 5,
+            },
+        }
+        vendors.append(vendor_row)
+
+    # ── 12b. Build vendor rows for Staging Suppliers ──────────────────────────
+    for sd in staging_suppliers:
+        if sd.status in ["Draft", "Pending Approval"]:
+            status = "Under Review"
+        elif sd.status == "Suspended":
+            status = "Suspended"
+        elif sd.status == "Rejected":
+            status = "Conditional"
+        else:
+            status = "Under Review"
+
+        vendor_row = {
+            "id": sd.name,
+            "name": sd.supplier_name or sd.name,
+            "category": sd.supplier_group or "Uncategorised",
+            "location": "—",
+            "status": status,
+            "tier": "Useful",
+            "complianceStatus": "Pending",
+            "lastAuditDate": "",
+            "certifications": [],
+            "rating": 0,
+            "onTimeDelivery": 0.0,
+            "qualityScore": 0.0,
+            "costIndex": 100,
+            "activePos": 0,
+            "totalSpend": 0.0,
+            "contactPerson": sd.supplier_name or "—",
+            "contactEmail": sd.name,
+            "tenC": {
+                "competency":         5,
+                "capacity":           5,
+                "qualityCommitment":  5,
+                "consistency":        5,
+                "cost":               5,
+                "cash":               5,
+                "communication":      5,
+                "controlOfProcesses": 5,
+                "csr":                5,
+                "culture":            5,
+            },
+        }
+        vendors.append(vendor_row)
+
+    # ── 13. KPI aggregates ───────────────────────────────────────────────────
+    approved_vendors     = [v for v in vendors if v["status"] == "Approved"]
+    conditional_vendors  = [v for v in vendors if v["status"] == "Conditional"]
+    suspended_vendors    = [v for v in vendors if v["status"] == "Suspended"]
+    under_review_vendors = [v for v in vendors if v["status"] == "Under Review"]
+    compliant_vendors    = [v for v in vendors if v["complianceStatus"] == "Compliant"]
+
+    total_spend    = sum(v["totalSpend"] for v in vendors)
+    avg_otd        = (
+        sum(v["onTimeDelivery"] for v in approved_vendors) / len(approved_vendors)
+        if approved_vendors else 0.0
+    )
+    avg_quality    = (
+        sum(v["qualityScore"] for v in approved_vendors) / len(approved_vendors)
+        if approved_vendors else 0.0
+    )
+
+    kpis = {
+        "approved":    len(approved_vendors),
+        "conditional": len(conditional_vendors) + len(suspended_vendors) + len(under_review_vendors),
+        "suspended":   len(suspended_vendors),
+        "underReview": len(under_review_vendors),
+        "totalSpend":  round(total_spend, 2),
+        "avgOnTime":   round(avg_otd, 1),
+        "avgQuality":  round(avg_quality, 1),
+        "compliant":   len(compliant_vendors),
+        "total":       len(vendors),
+    }
+
+    # ── 14. Category summaries (stacked bar chart) ───────────────────────────
+    cat_data: dict[str, dict] = {}
+    for v in vendors:
+        cat = v["category"]
+        if cat not in cat_data:
+            cat_data[cat] = {
+                "name": cat,
+                "approvedCount": 0,
+                "conditionalCount": 0,
+                "suspendedCount": 0,
+                "totalSpend": 0.0,
+            }
+        if v["status"] == "Approved":
+            cat_data[cat]["approvedCount"] += 1
+        elif v["status"] == "Conditional" or v["status"] == "Under Review":
+            cat_data[cat]["conditionalCount"] += 1
+        elif v["status"] == "Suspended":
+            cat_data[cat]["suspendedCount"] += 1
+        cat_data[cat]["totalSpend"] += v["totalSpend"]
+
+    category_summaries = sorted(cat_data.values(), key=lambda x: x["name"])
+
+    # ── 14. Dynamic Alerts ───────────────────────────────────────────────────
+    alerts = []
+    OTD_THRESHOLD = 85.0  # configurable: could come from a Settings doctype
+
+    for v in vendors:
+        # Suspended vendors
+        if v["status"] == "Suspended":
+            alerts.append({
+                "type": "error",
+                "supplier": v["name"],
+                "message": (
+                    f"Suspended as of {v['lastAuditDate'] or 'unknown date'}. "
+                    f"Quality score {v['qualityScore']:.1f}%. "
+                    f"{v['activePos']} active PO(s) — review for delisting or corrective action plan."
+                ),
+            })
+
+        # OTD below threshold (only non-suspended)
+        elif v["onTimeDelivery"] > 0 and v["onTimeDelivery"] < OTD_THRESHOLD:
+            alerts.append({
+                "type": "warning",
+                "supplier": v["name"],
+                "message": (
+                    f"On-time delivery at {v['onTimeDelivery']:.1f}% vs {OTD_THRESHOLD:.0f}% minimum. "
+                    f"{v['activePos']} active PO(s) at risk. Initiate vendor corrective action request."
+                ),
+            })
+
+        # Under Review / Pending Compliance
+        if v["status"] == "Under Review" and v["complianceStatus"] == "Pending":
+            alerts.append({
+                "type": "info",
+                "supplier": v["name"],
+                "message": (
+                    f"Audit completed {v['lastAuditDate'] or '—'}. "
+                    f"Compliance pending final QA sign-off. Certification documents under review."
+                ),
+            })
+
+        # Non-Compliant (expired certifications / failed audit)
+        if v["complianceStatus"] == "Non-Compliant" and v["status"] != "Suspended":
+            alerts.append({
+                "type": "warning",
+                "supplier": v["name"],
+                "message": (
+                    f"Non-compliant as of {v['lastAuditDate'] or '—'}. "
+                    f"Re-audit required. Conditional status maintained."
+                ),
+            })
+
+    # Categories with zero approved vendors (gap alert)
+    approved_cats = {v["category"] for v in vendors if v["status"] == "Approved"}
+    all_supplier_groups = frappe.db.sql_list(
+        "SELECT name FROM `tabSupplier Group` WHERE name != 'All Supplier Groups'"
+    )
+    for grp in all_supplier_groups:
+        if grp not in approved_cats:
+            alerts.append({
+                "type": "neutral",
+                "supplier": None,
+                "message": (
+                    f"Category '{grp}' has no approved vendors on AVL. "
+                    f"Procurement may be sourcing outside the approved list. "
+                    f"Initiate vendor onboarding."
+                ),
+            })
+
+    # Top performers (10C avg ≥ 9.0)
+    for v in vendors:
+        if v["status"] == "Approved":
+            avg_10c = sum(v["tenC"].values()) / 10
+            if avg_10c >= 9.0:
+                alerts.append({
+                    "type": "success",
+                    "supplier": v["name"],
+                    "message": (
+                        f"Top performer — 10C avg {avg_10c:.1f}/10. "
+                        f"OTD {v['onTimeDelivery']:.1f}%, Quality {v['qualityScore']:.1f}%. "
+                        f"Eligible for preferred vendor designation and volume contract renegotiation."
+                    ),
+                })
+
+    # ── 15. Distinct categories for filter dropdown ──────────────────────────
+    categories = sorted({v["category"] for v in vendors})
+
+    return {
+        "vendors": vendors,
+        "category_summaries": category_summaries,
+        "kpis": kpis,
+        "alerts": alerts,
+        "categories": categories,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. export_avl_csv  — called by the Download button in avl_lazy.tsx
+# ─────────────────────────────────────────────────────────────────────────────
+
+@frappe.whitelist()
+def export_avl_csv():
+    """
+    Returns the full AVL dataset as a CSV string.
+    The frontend creates a Blob and triggers a browser download.
+    """
+    user = frappe.session.user
+    if user == "Guest":
+        frappe.throw(_("Not logged in"), frappe.PermissionError)
+
+    # Reuse the same data pipeline
+    data = get_avl_data()
+    vendors = data.get("vendors", [])
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header
+    writer.writerow([
+        "Supplier ID", "Supplier Name", "Category", "Location",
+        "AVL Status", "Tier", "Rating", "On-Time Delivery %",
+        "Quality Score %", "Cost Index", "Active POs", "Total Spend (₹ Cr)",
+        "Last Audit Date", "Compliance Status", "Certifications",
+        "Contact Person", "Contact Email",
+        # 10C
+        "10C Competency", "10C Capacity", "10C Quality",
+        "10C Consistency", "10C Cost", "10C Cash",
+        "10C Communication", "10C Control", "10C CSR", "10C Culture",
+    ])
+
+    for v in vendors:
+        tc = v["tenC"]
+        writer.writerow([
+            v["id"], v["name"], v["category"], v["location"],
+            v["status"], v["tier"], v["rating"],
+            v["onTimeDelivery"], v["qualityScore"], v["costIndex"],
+            v["activePos"], v["totalSpend"],
+            v["lastAuditDate"], v["complianceStatus"],
+            "; ".join(v["certifications"]),
+            v["contactPerson"], v["contactEmail"],
+            tc["competency"], tc["capacity"], tc["qualityCommitment"],
+            tc["consistency"], tc["cost"], tc["cash"],
+            tc["communication"], tc["controlOfProcesses"], tc["csr"], tc["culture"],
+        ])
+
+    return {"csv": output.getvalue()}

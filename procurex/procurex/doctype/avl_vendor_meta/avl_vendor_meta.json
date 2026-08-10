@@ -1,0 +1,163 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "supplier",
+  "avl_status",
+  "avl_tier",
+  "compliance_status",
+  "last_audit_date",
+  "tenC_competency",
+  "tenC_capacity",
+  "tenC_quality_commitment",
+  "tenC_consistency",
+  "tenC_cost",
+  "tenC_cash",
+  "tenC_communication",
+  "tenC_control_of_processes",
+  "tenC_csr",
+  "tenC_culture",
+  "avl_certifications"
+ ],
+ "fields": [
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Supplier",
+   "options": "Supplier",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "Under Review",
+   "fieldname": "avl_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "AVL Status",
+   "options": "Approved\nConditional\nSuspended\nUnder Review",
+   "reqd": 1
+  },
+  {
+   "default": "Useful",
+   "fieldname": "avl_tier",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "AVL Tier",
+   "options": "Critical\nImportant\nUseful",
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "compliance_status",
+   "fieldtype": "Select",
+   "label": "Compliance Status",
+   "options": "Compliant\nNon-Compliant\nPending",
+   "reqd": 1
+  },
+  {
+   "fieldname": "last_audit_date",
+   "fieldtype": "Date",
+   "label": "Last Audit Date"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_competency",
+   "fieldtype": "Int",
+   "label": "10C Competency"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_capacity",
+   "fieldtype": "Int",
+   "label": "10C Capacity"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_quality_commitment",
+   "fieldtype": "Int",
+   "label": "10C Quality Commitment"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_consistency",
+   "fieldtype": "Int",
+   "label": "10C Consistency"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_cost",
+   "fieldtype": "Int",
+   "label": "10C Cost"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_cash",
+   "fieldtype": "Int",
+   "label": "10C Cash"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_communication",
+   "fieldtype": "Int",
+   "label": "10C Communication"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_control_of_processes",
+   "fieldtype": "Int",
+   "label": "10C Control of Processes"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_csr",
+   "fieldtype": "Int",
+   "label": "10C CSR"
+  },
+  {
+   "default": "5",
+   "fieldname": "tenC_culture",
+   "fieldtype": "Int",
+   "label": "10C Culture"
+  },
+  {
+   "fieldname": "avl_certifications",
+   "fieldtype": "Table",
+   "label": "AVL Certifications",
+   "options": "AVL Certification"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "ProcureX",
+ "name": "AVL Vendor Meta",
+ "naming_rule": "By fieldname",
+ "autoname": "field:supplier",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "All"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
