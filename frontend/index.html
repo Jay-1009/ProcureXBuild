@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ProcureX — Supplier Intelligence Dashboard</title>
+    <meta
+      name="description"
+      content="ProcureX is an enterprise supplier intelligence dashboard for procurement teams — track spend, qualification, performance and risk in real time."
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script>
+      window.csrf_token = "{{ csrf_token }}";
+      window.site_name = "{{ site_name }}";
+      if (!window.frappe) window.frappe = {};
+      frappe.boot = {{ boot | tojson }};
+      // src/router.tsx's fetch patch reads the CSRF token from a `csrf_token` cookie (not
+      // window.csrf_token) before attaching it to POST/PUT/DELETE /api/ calls. Frappe doesn't
+      // set that cookie itself, so mirror it here — otherwise authenticated write actions
+      // (e.g. submitting a quotation) fail with a CSRF error.
+      document.cookie = "csrf_token=" + encodeURIComponent(window.csrf_token) + "; path=/";
+    </script>
+
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

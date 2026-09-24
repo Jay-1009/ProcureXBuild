@@ -8,18 +8,32 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+# Supplier, Supplier Group, Address and Contact (used throughout procurex/api.py and the
+# doctype Link fields) are ERPNext doctypes.
+required_apps = ["erpnext"]
 
 # Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "procurex",
-# 		"logo": "/assets/procurex/logo.png",
-# 		"title": "ProcureX",
-# 		"route": "/procurex",
-# 		"has_permission": "procurex.api.permission.has_app_permission"
-# 	}
-# ]
+add_to_apps_screen = [
+	{
+		"name": "procurex",
+		"logo": "/assets/procurex/frontend/favicon.ico",
+		"title": "ProcureX",
+		"route": "/procurex",
+		"has_permission": "procurex.api.has_app_permission",
+	}
+]
+
+# Website Route Rules
+# --------------------
+
+# ProcureX is a client-rendered SPA (TanStack Router) with its own /auth screen for supplier
+# sign-in/sign-up — unlike a desk-only app, guests must be able to reach it (there's no Frappe
+# user account yet for a brand-new supplier), so this route is intentionally NOT gated server
+# side. Access to any actual data still goes through procurex.api's own whitelisted methods,
+# each of which checks frappe.session.user itself.
+website_route_rules = [
+	{"from_route": "/procurex/<path:app_path>", "to_route": "procurex"},
+]
 
 # Includes in <head>
 # ------------------

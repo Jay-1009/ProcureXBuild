@@ -2255,3 +2255,10 @@ def export_avl_csv():
         ])
 
     return {"csv": output.getvalue()}
+
+
+def has_app_permission():
+    # Gates the Desk "Apps" screen icon only (internal staff launching ProcureX from the
+    # desk). Actual data access for suppliers and staff alike is enforced per-endpoint above,
+    # not here.
+    return frappe.session.user != "Guest"
